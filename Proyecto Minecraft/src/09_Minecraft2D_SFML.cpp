@@ -1,9 +1,11 @@
 #include <SFML/Graphics.hpp>
+#include <SFML/Audio.hpp>
 #include <array>
 #include <map>
 #include <string>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 
 // Ejemplo 2D tipo "Minecraft" usando SFML con físicas básicas solo para el jugador
 // Características añadidas:
@@ -121,6 +123,8 @@ void resolveVertical(World &world, Player &p, float newPy) {
     p.py = newPy;
 }
 
+// (No enemy-specific resolvers needed for now)
+
 int main(){
     World world;
     init_world(world);
@@ -145,15 +149,30 @@ int main(){
     sf::Font font;
     font.loadFromFile("assets/fonts/Minecraft.ttf");
 
+    // Música de fondo (C418) — si existe en assets/music
+    sf::Music bgm;
+    if (bgm.openFromFile("assets/music/C418-Subwoofer-Lullaby-Minecraft-Volume-Alpha.ogg")) {
+        bgm.setLoop(true);
+        bgm.setVolume(40);
+        bgm.play();
+    }
+
     sf::RectangleShape tileShape(sf::Vector2f(TILE, TILE));
     sf::RectangleShape playerShape(sf::Vector2f(p.w, p.h));
     playerShape.setFillColor(sf::Color::Yellow);
+
+    // No enemy: eliminados para simplificar
 
     const float GRAVITY = 1500.0f; // px/s^2
     const float MOVE_SPEED = 150.0f; // px/s
     const float JUMP_SPEED = 520.0f; // px/s
 
     sf::Clock clock;
+    // Picar bloques por tiempo
+    bool breaking = false;
+    int breakX = -1, breakY = -1;
+    float breakProgress = 0.0f;
+    const float BASE_BREAK_TIME = 0.8f; // segundos para bloques normales
     while (window.isOpen()){
         sf::Event ev;
         while (window.pollEvent(ev)){
@@ -165,16 +184,7 @@ int main(){
                 if (ev.key.code == sf::Keyboard::Num3) p.selected=(char)STONE;
                 if (ev.key.code == sf::Keyboard::Num4) p.selected=(char)WOOD;
                 if (ev.key.code == sf::Keyboard::Num5) p.selected=(char)BEDR;
-                if (ev.key.code == sf::Keyboard::X) {
-                    int centerX = static_cast<int>(p.px + p.w/2);
-                    int centerY = static_cast<int>(p.py + p.h/2);
-                    int tx = (centerX + p.fx * TILE) / TILE;
-                    int ty = (centerY + p.fy * TILE) / TILE;
-                    if (in_bounds(tx,ty)){
-                        char b = get_block(world,tx,ty);
-                        if (b!=(char)AIR && b!=(char)BEDR){ p.inv[b]++; set_block(world,tx,ty,(char)AIR); }
-                    }
-                }
+                // tecla X ahora inicia picar (mecánica por tiempo) — manejado en el bucle principal
                 if (ev.key.code == sf::Keyboard::C) {
                     int centerX = static_cast<int>(p.px + p.w/2);
                     int centerY = static_cast<int>(p.py + p.h/2);
@@ -194,14 +204,10 @@ int main(){
                 }
             }
             if (ev.type == sf::Event::MouseButtonPressed){
+                // click handling: colocar con botón derecho (inmediato). Picar con botón izquierdo ahora se maneja manteniendo pulsado (ver loop principal).
                 sf::Vector2i m = sf::Mouse::getPosition(window);
                 int mx = m.x / TILE; int my = m.y / TILE;
-                if (ev.mouseButton.button == sf::Mouse::Left){
-                    if (in_bounds(mx,my)){
-                        char b = get_block(world,mx,my);
-                        if (b!=(char)AIR && b!=(char)BEDR){ p.inv[b]++; set_block(world,mx,my,(char)AIR); }
-                    }
-                } else if (ev.mouseButton.button == sf::Mouse::Right){
+                if (ev.mouseButton.button == sf::Mouse::Right){
                     if (in_bounds(mx,my)){
                         char b = p.selected;
                         if (get_block(world,mx,my)==(char)AIR && p.inv[b]>0){ p.inv[b]--; set_block(world,mx,my,b); }
@@ -234,6 +240,53 @@ int main(){
         // update facing y
         p.fy = (p.vy > 0) ? 1 : (p.vy < 0 ? -1 : 0);
 
+        // --- Mecánica de picar por tiempo ---
+        bool keyBreak = sf::Keyboard::isKeyPressed(sf::Keyboard::X);
+        bool mouseBreak = sf::Mouse::isButtonPressed(sf::Mouse::Left);
+        int targetX = -1, targetY = -1;
+        if (keyBreak) {
+            int centerX = static_cast<int>(p.px + p.w/2);
+            int centerY = static_cast<int>(p.py + p.h/2);
+            targetX = (centerX + p.fx * TILE) / TILE;
+            targetY = (centerY + p.fy * TILE) / TILE;
+        } else if (mouseBreak) {
+            sf::Vector2i mpos = sf::Mouse::getPosition(window);
+            targetX = mpos.x / TILE; targetY = mpos.y / TILE;
+        }
+
+        if (targetX != -1 && in_bounds(targetX, targetY)) {
+            char tb = get_block(world, targetX, targetY);
+            if (tb != (char)AIR && tb != (char)BEDR) {
+                // determine break time modifier by block type
+                float mult = 1.0f;
+                if (tb == (char)STONE) mult = 2.0f;
+                else if (tb == (char)WOOD) mult = 0.8f;
+
+                if (breaking && breakX == targetX && breakY == targetY) {
+                    breakProgress += dt;
+                } else {
+                    breaking = true;
+                    breakX = targetX; breakY = targetY; breakProgress = dt;
+                }
+
+                float need = BASE_BREAK_TIME * mult;
+                if (breakProgress >= need) {
+                    // completar ruptura
+                    p.inv[tb]++;
+                    set_block(world, breakX, breakY, (char)AIR);
+                    breaking = false; breakX = breakY = -1; breakProgress = 0.0f;
+                }
+            } else {
+                // objetivo no picable
+                breaking = false; breakX = breakY = -1; breakProgress = 0.0f;
+            }
+        } else {
+            // no está picando
+            breaking = false; breakX = breakY = -1; breakProgress = 0.0f;
+        }
+
+        // (No enemies active)
+
         window.clear(sf::Color(135,206,235));
 
         // draw world
@@ -247,9 +300,33 @@ int main(){
             }
         }
 
+        // mostrar progreso de picar si aplica
+        if (breaking && breakX>=0 && breakY>=0) {
+            sf::RectangleShape overlay(sf::Vector2f(TILE, TILE));
+            overlay.setPosition(breakX * TILE, breakY * TILE);
+            overlay.setFillColor(sf::Color(0,0,0,80));
+            window.draw(overlay);
+            // barra de progreso
+            char tb = get_block(world, breakX, breakY);
+            float mult = 1.0f;
+            if (tb == (char)STONE) mult = 2.0f; else if (tb == (char)WOOD) mult = 0.8f;
+            float need = BASE_BREAK_TIME * mult;
+            float ratio = std::min(1.0f, breakProgress / (need + 1e-6f));
+            sf::RectangleShape barBg(sf::Vector2f(TILE-6, 8));
+            barBg.setPosition(breakX * TILE + 3, breakY * TILE + TILE - 12);
+            barBg.setFillColor(sf::Color(0,0,0,160));
+            window.draw(barBg);
+            sf::RectangleShape bar(sf::Vector2f((TILE-6) * ratio, 8));
+            bar.setPosition(breakX * TILE + 3, breakY * TILE + TILE - 12);
+            bar.setFillColor(sf::Color::Green);
+            window.draw(bar);
+        }
+
         // draw player
         playerShape.setPosition(p.px, p.py);
         window.draw(playerShape);
+
+        // (No enemies to draw)
 
         // HUD
         sf::RectangleShape hudBg(sf::Vector2f(W*TILE, 80));
@@ -277,6 +354,8 @@ int main(){
         instr.setFillColor(sf::Color::White);
         instr.setPosition(10, H*TILE + 4);
         window.draw(instr);
+
+        // (No HUD de vida ni manejo de Game Over en esta versión)
 
         window.display();
     }
