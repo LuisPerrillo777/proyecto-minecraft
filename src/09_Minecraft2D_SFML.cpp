@@ -198,6 +198,10 @@ int main(){
     sf::RenderWindow window(sf::VideoMode(VIEW_W_TILES * TILE, VIEW_H_TILES * TILE + HUD_HEIGHT), "Minecraft2D - SFML (Fisicas)");
     window.setFramerateLimit(60);
     sf::View camera(sf::FloatRect(0.f, 0.f, (float)VIEW_W_TILES * TILE, (float)VIEW_H_TILES * TILE));
+    // Camera options: zoom out a bit to see more, and enable smoothing (LERP)
+    const float CAM_ZOOM = 1.25f; // >1 zooms out (shows more)
+    const float CAM_LERP = 8.0f; // smoothing speed
+    camera.zoom(CAM_ZOOM);
 
     std::map<char, sf::Color> color {
         {(char)AIR, sf::Color(135,206,235)},
@@ -226,6 +230,12 @@ int main(){
     sf::RectangleShape tileShape(sf::Vector2f(TILE, TILE));
     sf::RectangleShape playerShape(sf::Vector2f(p.w, p.h));
     playerShape.setFillColor(sf::Color::Yellow);
+
+    // FPS display
+    sf::Text fpsText;
+    fpsText.setFont(font);
+    fpsText.setCharacterSize(14);
+    fpsText.setFillColor(sf::Color::White);
 
     // No enemy: eliminados para simplificar
 
@@ -366,15 +376,20 @@ int main(){
         window.clear(sf::Color(135,206,235));
 
         // actualizar cámara centrada en el jugador pero limitada al mapa
-        float halfW = (float)VIEW_W_TILES * TILE * 0.5f;
-        float halfH = (float)VIEW_H_TILES * TILE * 0.5f;
+        float halfW = (float)VIEW_W_TILES * TILE * 0.5f * CAM_ZOOM;
+        float halfH = (float)VIEW_H_TILES * TILE * 0.5f * CAM_ZOOM;
         float mapPixelW = (float)W * TILE;
         float mapPixelH = (float)H * TILE;
         float desiredX = p.px + p.w*0.5f;
         float desiredY = p.py + p.h*0.5f;
         float camX = std::min(std::max(desiredX, halfW), mapPixelW - halfW);
         float camY = std::min(std::max(desiredY, halfH), mapPixelH - halfH);
-        camera.setCenter(camX, camY);
+        // Smooth camera: interpolate current center towards desired using exponential smoothing
+        sf::Vector2f curCenter = camera.getCenter();
+        sf::Vector2f desiredCenter(camX, camY);
+        float alpha = 1.0f - std::exp(-CAM_LERP * dt); // smoothing factor
+        sf::Vector2f newCenter = curCenter + (desiredCenter - curCenter) * alpha;
+        camera.setCenter(newCenter);
 
         // dibujamos el mundo usando la cámara
         window.setView(camera);
@@ -446,6 +461,12 @@ int main(){
         instr.setFillColor(sf::Color::White);
         instr.setPosition(10, VIEW_H_TILES * TILE + 4);
         window.draw(instr);
+
+        // FPS
+        float fps = (dt > 0.0001f) ? (1.f / dt) : 0.f;
+        fpsText.setString(std::to_string((int)fps) + " FPS");
+        fpsText.setPosition((float)VIEW_W_TILES * TILE - 90.f, VIEW_H_TILES * TILE + 4.f);
+        window.draw(fpsText);
 
         // (No HUD de vida ni manejo de Game Over en esta versión)
 
